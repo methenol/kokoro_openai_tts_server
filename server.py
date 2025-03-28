@@ -63,7 +63,17 @@ def get_supported_voices(lang_code=DEFAULT_LANG_CODE):
     except Exception as e:
         logger.error(f"Error getting supported voices: {e}")
         # Return default voice list as fallback
-        return ["bm_lewis", "af_heart", "en_female_1", "en_male_1", "en_female_2", "en_male_2", "om_dionysus"]
+        return [
+            "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", "af_kore", "af_nicole",
+            "af_nova", "af_river", "af_sarah", "af_sky", "am_adam", "am_echo", "am_eric",
+            "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa",
+            "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable", "bm_george",
+            "bm_lewis", "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo",
+            "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi", "zm_yunjian", "zm_yunxi",
+            "zm_yunxia", "zm_yunyang", "ef_dora", "em_alex", "em_santa", "ff_siwis",
+            "hf_alpha", "hf_beta", "hm_omega", "hm_psi", "if_sara", "im_nicola",
+            "pf_dora", "pm_alex", "pm_santa"
+        ]
 
 def load_pipeline(lang_code=DEFAULT_LANG_CODE):
     """Load the Kokoro TTS pipeline."""
