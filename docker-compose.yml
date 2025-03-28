@@ -1,0 +1,19 @@
+version: '3'
+
+services:
+  kokoro-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8013:8013"
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
