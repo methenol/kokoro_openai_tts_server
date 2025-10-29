@@ -238,6 +238,10 @@ def blend_voice_packs(voice_weights: List[Tuple[str, float]]) -> Any:
     
     logger.info(f"Blending voices: {voice_weights}")
     
+    # Validate input
+    if not voice_weights:
+        raise ValueError("No voices specified for blending")
+    
     # Load all voice packs
     packs = []
     for voice_name, weight in voice_weights:
