@@ -265,8 +265,11 @@ def blend_voice_packs(voice_weights: List[Tuple[str, float]]) -> Any:
                 blended_tensor = blended_tensor + tensor * weight
         blended_pack.append(blended_tensor)
     
+    # Convert list of tensors to stacked tensor (same format as original voice packs)
+    blended_tensor_stack = torch.stack(blended_pack)
+    
     logger.info(f"Successfully blended voice pack with {len(blended_pack)} style vectors")
-    return blended_pack
+    return blended_tensor_stack
 
 def load_pipeline(lang_code=DEFAULT_LANG_CODE):
     """Load the Kokoro TTS pipeline."""
@@ -311,7 +314,6 @@ def generate_speech(text, voice=DEFAULT_VOICE, lang_code=DEFAULT_LANG_CODE, resp
             logger.info(f"Detected blend expression: {voice}")
             blend_lang, voice_weights = parse_blend_expression(voice)
             blended_pack = blend_voice_packs(voice_weights)
-            voice_arg = blended_pack
             
             # Use the language from the blend expression
             if blend_lang != lang_code:
@@ -319,6 +321,12 @@ def generate_speech(text, voice=DEFAULT_VOICE, lang_code=DEFAULT_LANG_CODE, resp
                 lang_code = blend_lang
                 if tts_pipeline is None or getattr(tts_pipeline, 'lang_code', None) != lang_code:
                     load_pipeline(lang_code)
+            
+            # Register the blended pack in the pipeline's voice cache
+            # Use the original expression as the key
+            blend_key = f"__blend_{hash(voice)}"
+            tts_pipeline.voices[blend_key] = blended_pack
+            voice_arg = blend_key
         else:
             voice_arg = voice
         
