@@ -5,7 +5,9 @@ import io
 import json
 import logging
 import traceback
+import re
 from pathlib import Path
+from typing import List, Tuple, Dict, Any
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 
@@ -23,6 +25,7 @@ PORT = 8013
 
 # Model and configs
 MODEL_ID = "hexgrad/Kokoro-82M"
+VOICE_REPO = os.environ.get("KOKORO_VOICE_REPO", "hexgrad/Kokoro-82M")
 DEFAULT_LANG_CODE = 'a'  # American English
 DEFAULT_VOICE = "af_heart"
 SUPPORTED_FORMATS = ["mp3", "opus", "aac", "flac", "wav", "pcm"]  # Added PCM format
@@ -30,6 +33,7 @@ SUPPORTED_FORMATS = ["mp3", "opus", "aac", "flac", "wav", "pcm"]  # Added PCM fo
 # Global variable for the TTS pipeline
 tts_pipeline = None
 supported_voices = None
+voice_pack_cache = {}  # Cache for loaded voice packs
 supported_langs = {
     'a': 'American English',
     'b': 'British English',
@@ -75,6 +79,192 @@ def get_supported_voices(lang_code=DEFAULT_LANG_CODE):
             "pf_dora", "pm_alex", "pm_santa"
         ]
 
+def is_blend_expression(voice: str) -> bool:
+    """Check if a voice string is a blend expression."""
+    return ',' in voice or (':' in voice and '.' not in voice.split(':')[0])
+
+def parse_blend_expression(voice_expr: str) -> Tuple[str, List[Tuple[str, float]]]:
+    """
+    Parse a blend expression like 'af_heart:90,am_adam:10' or 'a.af_heart:70,am_adam:30'.
+    
+    Returns:
+        Tuple of (lang_code, list of (voice_name, weight) tuples)
+    
+    Raises:
+        ValueError: If the expression is malformed
+    """
+    # Validate input
+    if not voice_expr or not voice_expr.strip():
+        raise ValueError("Empty blend expression")
+    
+    try:
+        items = [item.strip() for item in voice_expr.split(',')]
+        if not items or all(not item for item in items):
+            raise ValueError("Empty blend expression")
+        
+        # Parse first item to extract language code
+        first_item = items[0]
+        if not first_item:
+            raise ValueError("Empty blend expression")
+        
+        lang_code = DEFAULT_LANG_CODE
+        
+        # Check if first item has explicit language prefix (e.g., 'a.af_heart:70')
+        if '.' in first_item:
+            lang_part, rest = first_item.split('.', 1)
+            if lang_part in supported_langs:
+                lang_code = lang_part
+                first_item = rest
+                items[0] = rest
+        else:
+            # Extract language from first character of first voice name
+            voice_name = first_item.split(':')[0] if ':' in first_item else first_item
+            if voice_name and voice_name[0] in supported_langs:
+                lang_code = voice_name[0]
+        
+        # Parse all items to get (name, weight) tuples
+        parsed_items = []
+        cross_language_voices = []
+        
+        for item in items:
+            if not item:
+                raise ValueError("Empty voice name in blend expression")
+            
+            if ':' in item:
+                parts = item.rsplit(':', 1)
+                if len(parts) != 2:
+                    raise ValueError(f"Invalid format in '{item}'")
+                    
+                voice_name = parts[0].strip()
+                weight_str = parts[1].strip()
+                
+                if not voice_name:
+                    raise ValueError("Empty voice name in blend expression")
+                if not weight_str:
+                    raise ValueError(f"Empty weight for voice '{voice_name}'")
+                
+                # Parse weight (can be percentage or number)
+                if weight_str.endswith('%'):
+                    weight = float(weight_str[:-1]) / 100.0
+                else:
+                    weight = float(weight_str)
+                    
+                if weight <= 0:
+                    raise ValueError(f"Weight must be positive, got {weight}")
+            else:
+                voice_name = item.strip()
+                weight = 1.0
+            
+            # Check if voice has different language prefix
+            if voice_name and voice_name[0] in supported_langs and voice_name[0] != lang_code:
+                cross_language_voices.append(voice_name)
+            
+            parsed_items.append((voice_name, weight))
+        
+        # Warn if cross-language blending detected
+        if cross_language_voices:
+            logger.warning(f"Cross-language blending detected. Base language: {lang_code}, "
+                         f"other voices: {cross_language_voices}")
+        
+        # Normalize weights to sum to 1.0
+        total_weight = sum(weight for _, weight in parsed_items)
+        if total_weight <= 0:
+            raise ValueError("Total weight must be positive")
+        
+        normalized_items = [(name, weight / total_weight) for name, weight in parsed_items]
+        
+        return lang_code, normalized_items
+        
+    except (ValueError, IndexError) as e:
+        raise ValueError(f"Malformed blend expression '{voice_expr}': {str(e)}")
+
+def load_voice_pack(voice_name: str) -> Any:
+    """
+    Load a voice pack from Hugging Face Hub.
+    
+    Args:
+        voice_name: Name of the voice (e.g., 'af_heart')
+    
+    Returns:
+        Loaded voice pack (list of tensors)
+    
+    Raises:
+        ValueError: If voice pack cannot be loaded
+    """
+    global voice_pack_cache
+    
+    # Check cache first
+    if voice_name in voice_pack_cache:
+        logger.info(f"Using cached voice pack for '{voice_name}'")
+        return voice_pack_cache[voice_name]
+    
+    try:
+        import torch
+        from huggingface_hub import hf_hub_download
+        
+        # Download the voice pack file
+        logger.info(f"Downloading voice pack for '{voice_name}' from {VOICE_REPO}")
+        voice_path = hf_hub_download(
+            repo_id=VOICE_REPO,
+            filename=f"voices/{voice_name}.pt"
+        )
+        
+        # Load the voice pack
+        voice_pack = torch.load(voice_path, map_location='cpu')
+        
+        # Cache it
+        voice_pack_cache[voice_name] = voice_pack
+        logger.info(f"Successfully loaded and cached voice pack for '{voice_name}'")
+        
+        return voice_pack
+        
+    except Exception as e:
+        logger.error(f"Failed to load voice pack '{voice_name}': {e}")
+        raise ValueError(f"unknown voice '{voice_name}'")
+
+def blend_voice_packs(voice_weights: List[Tuple[str, float]]) -> Any:
+    """
+    Blend multiple voice packs with given weights.
+    
+    Args:
+        voice_weights: List of (voice_name, weight) tuples
+    
+    Returns:
+        Blended voice pack (list of tensors)
+    
+    Raises:
+        ValueError: If voice packs cannot be loaded or blended
+    """
+    import torch
+    
+    logger.info(f"Blending voices: {voice_weights}")
+    
+    # Load all voice packs
+    packs = []
+    for voice_name, weight in voice_weights:
+        pack = load_voice_pack(voice_name)
+        packs.append((pack, weight))
+    
+    # Determine minimum length across all packs
+    min_length = min(len(pack) for pack, _ in packs)
+    logger.info(f"Blending {len(packs)} voice packs, using minimum length: {min_length}")
+    
+    # Blend each position in the pack
+    blended_pack = []
+    for i in range(min_length):
+        # Compute weighted sum of tensors at position i
+        blended_tensor = None
+        for pack, weight in packs:
+            tensor = pack[i]
+            if blended_tensor is None:
+                blended_tensor = tensor * weight
+            else:
+                blended_tensor = blended_tensor + tensor * weight
+        blended_pack.append(blended_tensor)
+    
+    logger.info(f"Successfully blended voice pack with {len(blended_pack)} style vectors")
+    return blended_pack
+
 def load_pipeline(lang_code=DEFAULT_LANG_CODE):
     """Load the Kokoro TTS pipeline."""
     global tts_pipeline, supported_voices
@@ -113,10 +303,26 @@ def generate_speech(text, voice=DEFAULT_VOICE, lang_code=DEFAULT_LANG_CODE, resp
     try:
         import soundfile as sf
         
+        # Check if voice is a blend expression
+        if is_blend_expression(voice):
+            logger.info(f"Detected blend expression: {voice}")
+            blend_lang, voice_weights = parse_blend_expression(voice)
+            blended_pack = blend_voice_packs(voice_weights)
+            voice_arg = blended_pack
+            
+            # Use the language from the blend expression
+            if blend_lang != lang_code:
+                logger.info(f"Switching language from {lang_code} to {blend_lang} based on blend expression")
+                lang_code = blend_lang
+                if tts_pipeline is None or getattr(tts_pipeline, 'lang_code', None) != lang_code:
+                    load_pipeline(lang_code)
+        else:
+            voice_arg = voice
+        
         # Generate speech using the pipeline
         generator = tts_pipeline(
             text, 
-            voice=voice, 
+            voice=voice_arg, 
             speed=speed
         )
         
@@ -235,7 +441,17 @@ def create_speech():
         
         # Extract language code - default to American English 'a'
         lang_code = DEFAULT_LANG_CODE
-        if '.' in voice and len(voice) > 2:
+        original_voice = voice
+        
+        # Check if it's a blend expression first
+        if is_blend_expression(voice):
+            try:
+                lang_code, _ = parse_blend_expression(voice)
+                logger.info(f"Blend expression detected, using language code: {lang_code}")
+            except ValueError as e:
+                logger.error(f"Invalid blend expression: {e}")
+                return jsonify({"error": str(e)}), 400
+        elif '.' in voice and len(voice) > 2:
             # If voice contains language code like 'a.bm_lewis'
             parts = voice.split('.', 1)
             if parts[0] in supported_langs:
@@ -254,8 +470,8 @@ def create_speech():
             logger.info(f"Loading pipeline for language {lang_code}")
             load_pipeline(lang_code)
         
-        # Validate voice against known voices
-        if voice not in supported_voices:
+        # Validate voice - skip validation for blend expressions as they're validated during parsing
+        if not is_blend_expression(voice) and voice not in supported_voices:
             logger.error(f"Voice '{voice}' not supported for language '{lang_code}'. Available voices: {supported_voices}")
             return jsonify({"error": f"Voice '{voice}' not supported for language '{lang_code}'. Supported voices: {supported_voices}"}), 400
             
@@ -336,7 +552,8 @@ def health_check():
         "model": MODEL_ID,
         "supported_languages": supported_langs,
         "supported_voices": supported_voices,
-        "supported_formats": SUPPORTED_FORMATS
+        "supported_formats": SUPPORTED_FORMATS,
+        "supports_blended_voices": True
     })
 
 if __name__ == "__main__":
