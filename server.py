@@ -452,8 +452,10 @@ def create_speech():
                 lang_code, _ = parse_blend_expression(voice)
                 logger.info(f"Blend expression detected, using language code: {lang_code}")
             except ValueError as e:
+                # Log full error internally but only expose safe message to client
                 logger.error(f"Invalid blend expression: {e}")
-                return jsonify({"error": str(e)}), 400
+                # Only return generic error message to avoid information disclosure
+                return jsonify({"error": "Invalid blend expression format. Use syntax like 'voice1:weight1,voice2:weight2'"}), 400
         elif '.' in voice and len(voice) > 2:
             # If voice contains language code like 'a.bm_lewis'
             parts = voice.split('.', 1)
