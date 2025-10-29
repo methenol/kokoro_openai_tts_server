@@ -118,105 +118,46 @@ echo "Audio saved to speech.mp3"
 
 *   **Note on Voices:** To specify a language other than the default (American English), prefix the voice name with the language code and a dot (e.g., `b.bm_lewis` for British English). If you omit the prefix (e.g., `af_heart`), the server will use the default American English (`a`). Check the `/health` or `/v1/languages` endpoints for available codes and voices.
 
-### Blended Voices
+#### Blended Voices
 
-The server supports **blended voices**, which allow you to create a weighted combination of multiple voices. This feature enables you to create unique voice characteristics by mixing different voices together.
+You can blend multiple voices by using a comma-separated list with optional weights:
 
-#### Syntax
+```bash
+# Blend with explicit weights (90% af_heart, 10% am_adam)
+curl -X POST http://localhost:8013/v1/audio/speech \
+     -H "Content-Type: application/json" \
+     -d '{
+           "model": "hexgrad/Kokoro-82M",
+           "input": "Hello! This is a blended voice.",
+           "voice": "af_heart:90,am_adam:10",
+           "response_format": "mp3"
+         }' \
+     --output blended.mp3
 
-Blended voices use a comma-separated list of voice names with optional weights:
+# Equal weights (50/50)
+curl -X POST http://localhost:8013/v1/audio/speech \
+     -H "Content-Type: application/json" \
+     -d '{
+           "model": "hexgrad/Kokoro-82M",
+           "input": "This uses equal weights.",
+           "voice": "af_heart,am_adam",
+           "response_format": "mp3"
+         }' \
+     --output equal_blend.mp3
 
+# Percentage notation
+curl -X POST http://localhost:8013/v1/audio/speech \
+     -H "Content-Type: application/json" \
+     -d '{
+           "model": "hexgrad/Kokoro-82M",
+           "input": "Using percentages.",
+           "voice": "af_heart:75%,am_adam:25%",
+           "response_format": "mp3"
+         }' \
+     --output percent_blend.mp3
 ```
-<voice1>:<weight1>,<voice2>:<weight2>,...
-```
 
-**Examples:**
-
-*   **With explicit weights:**
-    ```bash
-    curl -X POST http://localhost:8013/v1/audio/speech \
-         -H "Content-Type: application/json" \
-         -d '{
-               "model": "hexgrad/Kokoro-82M",
-               "input": "Hello! This is a blended voice.",
-               "voice": "af_heart:90,am_adam:10",
-               "response_format": "mp3"
-             }' \
-         --output blended_speech.mp3
-    ```
-    This creates a voice that is 90% `af_heart` and 10% `am_adam`.
-
-*   **Equal weights (no explicit weights):**
-    ```bash
-    curl -X POST http://localhost:8013/v1/audio/speech \
-         -H "Content-Type: application/json" \
-         -d '{
-               "model": "hexgrad/Kokoro-82M",
-               "input": "This blend uses equal weights.",
-               "voice": "af_heart,af_bella",
-               "response_format": "mp3"
-             }' \
-         --output equal_blend.mp3
-    ```
-    This creates a 50/50 blend of `af_heart` and `af_bella`.
-
-*   **With percentage weights:**
-    ```bash
-    curl -X POST http://localhost:8013/v1/audio/speech \
-         -H "Content-Type: application/json" \
-         -d '{
-               "model": "hexgrad/Kokoro-82M",
-               "input": "Using percentage notation.",
-               "voice": "bf_emma:25%,af_heart:75%",
-               "response_format": "mp3"
-             }' \
-         --output percentage_blend.mp3
-    ```
-
-*   **With explicit language prefix:**
-    ```bash
-    curl -X POST http://localhost:8013/v1/audio/speech \
-         -H "Content-Type: application/json" \
-         -d '{
-               "model": "hexgrad/Kokoro-82M",
-               "input": "Blended British English voices.",
-               "voice": "b.bf_alice:60,bf_emma:40",
-               "response_format": "mp3"
-             }' \
-         --output british_blend.mp3
-    ```
-
-*   **Multiple voices:**
-    ```bash
-    curl -X POST http://localhost:8013/v1/audio/speech \
-         -H "Content-Type: application/json" \
-         -d '{
-               "model": "hexgrad/Kokoro-82M",
-               "input": "Blending three voices together.",
-               "voice": "af_heart:50,am_adam:30,af_bella:20",
-               "response_format": "mp3"
-             }' \
-         --output triple_blend.mp3
-    ```
-
-#### Notes
-
-*   **Language Detection:** The language is automatically determined from the first voice in the blend expression. If the first voice has an explicit language prefix (e.g., `b.bf_alice`), that language will be used. Otherwise, the language is inferred from the first character of the first voice name.
-*   **Weight Normalization:** Weights are automatically normalized to sum to 1.0, so you can use any positive numbers.
-*   **Voice Availability:** All voices in a blend expression must exist in the configured voice repository (default: `hexgrad/Kokoro-82M`).
-*   **Cross-Language Blending:** While technically possible, blending voices from different languages may produce unexpected results. The server will log a warning if this is detected.
-*   **Configuration:** You can set a custom voice repository using the `KOKORO_VOICE_REPO` environment variable.
-
-#### How It Works
-
-When you specify a blended voice:
-
-1.  The server downloads each voice pack file (`voices/<name>.pt`) from the Hugging Face repository.
-2.  Voice packs are cached in memory to avoid repeated downloads.
-3.  The server computes a weighted average of the voice style vectors across all specified voices.
-4.  The blended voice pack is passed to the Kokoro TTS engine to generate speech.
-
-This approach allows for smooth voice transitions and unique voice characteristics that aren't available with single voices alone.
+Weights are automatically normalized to sum to 1.0. The language is determined from the first voice (or explicit prefix like `b.bf_alice:60,bf_emma:40`).
 
 ### Stopping the Server
 
