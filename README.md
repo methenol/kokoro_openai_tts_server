@@ -10,6 +10,7 @@ The server can be run locally using a Python virtual environment or containerize
 
 *   **High-Quality TTS:** Leverages the Kokoro model for speech synthesis.
 *   **OpenAI API Compatibility:** Provides `/v1/audio/speech` and `/v1/models` endpoints.
+*   **Blended Voices:** Support for weighted blending of multiple voices (e.g., `af_heart:90,am_adam:10`).
 *   **Multiple Languages:** Supports various languages including:
     *   American English (`a`)
     *   British English (`b`)
@@ -116,6 +117,47 @@ echo "Audio saved to speech.mp3"
 ```
 
 *   **Note on Voices:** To specify a language other than the default (American English), prefix the voice name with the language code and a dot (e.g., `b.bm_lewis` for British English). If you omit the prefix (e.g., `af_heart`), the server will use the default American English (`a`). Check the `/health` or `/v1/languages` endpoints for available codes and voices.
+
+#### Blended Voices
+
+You can blend multiple voices by using a comma-separated list with optional weights:
+
+```bash
+# Blend with explicit weights (90% af_heart, 10% am_adam)
+curl -X POST http://localhost:8013/v1/audio/speech \
+     -H "Content-Type: application/json" \
+     -d '{
+           "model": "hexgrad/Kokoro-82M",
+           "input": "Hello! This is a blended voice.",
+           "voice": "af_heart:90,am_adam:10",
+           "response_format": "mp3"
+         }' \
+     --output blended.mp3
+
+# Equal weights (50/50)
+curl -X POST http://localhost:8013/v1/audio/speech \
+     -H "Content-Type: application/json" \
+     -d '{
+           "model": "hexgrad/Kokoro-82M",
+           "input": "This uses equal weights.",
+           "voice": "af_heart,am_adam",
+           "response_format": "mp3"
+         }' \
+     --output equal_blend.mp3
+
+# Percentage notation
+curl -X POST http://localhost:8013/v1/audio/speech \
+     -H "Content-Type: application/json" \
+     -d '{
+           "model": "hexgrad/Kokoro-82M",
+           "input": "Using percentages.",
+           "voice": "af_heart:75%,am_adam:25%",
+           "response_format": "mp3"
+         }' \
+     --output percent_blend.mp3
+```
+
+Weights are automatically normalized to sum to 1.0. The language is determined from the first voice (or explicit prefix like `b.bf_alice:60,bf_emma:40`).
 
 ### Stopping the Server
 
